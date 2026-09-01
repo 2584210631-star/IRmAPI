@@ -43,6 +43,8 @@ icon.filename = resources/icon.png
 
 # 权限：联网即可
 android.permissions = INTERNET,ACCESS_NETWORK_STATE
+# 允许明文 HTTP（本地网关 http://127.0.0.1:5005，Android 9+ 默认禁止）
+android.usescleartexttraffic = True
 
 # SDK / NDK 版本
 android.api = 33

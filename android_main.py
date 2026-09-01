@@ -16,8 +16,23 @@ import os
 import sys
 import threading
 import time
+import traceback
 import urllib.request
 from pathlib import Path
+
+# Kivy 中文字体：在 import App 之前设置默认字体为 Android 系统中文字体
+from kivy.config import Config
+_CJK_FONT_CANDIDATES = [
+    "/system/fonts/NotoSansCJK-Regular.ttc",
+    "/system/fonts/NotoSansSC-Regular.otf",
+    "/system/fonts/NotoSansMonoCJKsc-Regular.otf",
+    "/system/fonts/DroidSansFallback.ttf",
+    "/system/fonts/NotoSerifCJK-Regular.ttc",
+]
+for _f in _CJK_FONT_CANDIDATES:
+    if os.path.exists(_f):
+        Config.set("kivy", "default_font", ["IRmCJK", _f])
+        break
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -32,11 +47,19 @@ _PORT = int(os.environ.get("PORT", "5005"))
 _BASE_DIR = Path(__file__).resolve().parent
 
 
-def run_gateway() -> None:
-    import uvicorn
-    from server import app
+_ERROR_LOG = _BASE_DIR / "gateway_error.log"
 
-    uvicorn.run(app, host="127.0.0.1", port=_PORT, log_level="warning")
+def run_gateway() -> None:
+    try:
+        import uvicorn
+        from server import app
+        # Android 上 uvloop 不可用，显式用 asyncio
+        uvicorn.run(app, host="127.0.0.1", port=_PORT, log_level="warning", loop="asyncio")
+    except Exception:
+        try:
+            _ERROR_LOG.write_text(traceback.format_exc(), encoding="utf-8")
+        except Exception:
+            pass
 
 
 def wait_port(port: int, timeout: float = 12.0) -> bool:
@@ -118,6 +141,7 @@ def android_webview_login(name: str) -> str:
         settings = wv.getSettings()
         settings.setJavaScriptEnabled(True)
         settings.setDomStorageEnabled(True)
+        settings.setDefaultTextEncodingName("utf-8")
         wv.setWebViewClient(WebViewClient())
         wv.loadUrl(url)
         layout.addView(wv, LayoutParams(-1, -1))
@@ -184,7 +208,15 @@ class IrmUi(BoxLayout):
             urllib.request.urlopen(f"http://127.0.0.1:{_PORT}/ping", timeout=1)
             self.status.text = "IRmAPI 网关运行中 ✓"
         except Exception:
-            self.status.text = "网关未就绪"
+            msg = "网关未就绪"
+            try:
+                if _ERROR_LOG.exists():
+                    err = _ERROR_LOG.read_text(encoding="utf-8")
+                    last = err.strip().splitlines()[-1] if err.strip() else ""
+                    msg = f"网关启动失败: {last[:60]}"
+            except Exception:
+                pass
+            self.status.text = msg
         Clock.schedule_once(self._tick, 3)
 
     def open_console(self):
@@ -201,6 +233,7 @@ class IrmUi(BoxLayout):
             wv = WebView(act)
             wv.getSettings().setJavaScriptEnabled(True)
             wv.getSettings().setDomStorageEnabled(True)
+            wv.getSettings().setDefaultTextEncodingName("utf-8")
             wv.setWebViewClient(WebViewClient())
             wv.loadUrl(f"http://127.0.0.1:{_PORT}/console")
             act.setContentView(wv)
