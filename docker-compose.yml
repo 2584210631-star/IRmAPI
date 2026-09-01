@@ -1,0 +1,9 @@
+services:
+  chat2api-plus:
+    build: .
+    container_name: chat2api-plus
+    restart: unless-stopped
+    ports:
+      - "${PORT:-5005}:5005"
+    env_file:
+      - .env
