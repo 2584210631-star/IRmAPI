@@ -8,8 +8,6 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,17 +48,3 @@ jobs:
           name: irmapi-apk
           path: bin/*.apk
           if-no-files-found: error
-
-      - name: Create GitHub Release
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          APK=$(ls bin/*.apk | head -1)
-          echo "APK: $APK"
-          TAG="v1.3.0-$(date +%Y%m%d-%H%M)"
-          gh release create "$TAG" "$APK" \
-            --title "IRmAPI $TAG" \
-            --notes "自动构建 APK — 豆包/DeepSeek/千问 三通道一键登录，词元自由" \
-            --prerelease
-          echo "Release tag: $TAG"
