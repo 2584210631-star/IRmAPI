@@ -38,7 +38,7 @@ from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
-from kivy.clock import Clock
+from kivy.clock import Clock, mainthread
 
 os.environ.setdefault("HOST", "127.0.0.1")
 os.environ.setdefault("PORT", "5005")
@@ -113,19 +113,14 @@ _LOGIN_SPECS = {
 def android_webview_login(name: str) -> str:
     """在 Android 上用原生 WebView 打开登录页，登录后自动读 Cookie 存 .env。
 
-    需要 python-for-android 的 android 模块（run_on_ui_thread）+ pyjnius。
+    用 Kivy 的 @mainthread 调度 UI 操作（不依赖 p4a 的 run_on_ui_thread）。
     """
-    try:
-        from android import run_on_ui_thread
-    except ImportError:
-        return "当前环境无 android 模块（需在 APK 内运行）"
     url, success_keys, env_var = _LOGIN_SPECS[name]
+    _state = {"layout": None, "wv": None, "act": None, "old_view": None}
 
-    @run_on_ui_thread
-    def _do_ui():
+    @mainthread
+    def _show_webview():
         from jnius import autoclass
-        from android import activity
-
         PythonActivity = autoclass("org.kivy.android.PythonActivity")
         WebView = autoclass("android.webkit.WebView")
         WebViewClient = autoclass("android.webkit.WebViewClient")
@@ -135,6 +130,7 @@ def android_webview_login(name: str) -> str:
         Color = autoclass("android.graphics.Color")
 
         act = PythonActivity.mActivity
+        old_view = act.getDecorView().getRootView()
         layout = LinearLayout(act)
         layout.setBackgroundColor(Color.parseColor("#0b0e14"))
         wv = WebView(act)
@@ -143,35 +139,45 @@ def android_webview_login(name: str) -> str:
         settings.setDomStorageEnabled(True)
         settings.setDefaultTextEncodingName("utf-8")
         wv.setWebViewClient(WebViewClient())
+        CookieManager.getInstance().setAcceptCookie(True)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, True)
         wv.loadUrl(url)
         layout.addView(wv, LayoutParams(-1, -1))
         act.setContentView(layout)
+        _state.update(layout=layout, wv=wv, act=act, old_view=old_view)
 
-        def poll():
-            deadline = time.time() + 600
-            while time.time() < deadline:
-                time.sleep(2)
-                try:
-                    cookie = CookieManager.getInstance().getCookie(url) or ""
-                except Exception:
-                    continue
-                keys = {k.strip() for k, _v in [p.split("=", 1) for p in cookie.split(";") if "=" in p]}
-                if not any(k in success_keys for k in keys):
-                    continue
-                msg = save_cookie(env_var, cookie)
-                reload_gateway()
-                try:
-                    act.runOnUiThread(lambda: act.setContentView(PythonActivity.mContentView))
-                except Exception:
-                    pass
-                return msg
+    @mainthread
+    def _restore_view():
+        act = _state.get("act")
+        old_view = _state.get("old_view")
+        if act is not None and old_view is not None:
+            try:
+                act.setContentView(old_view)
+            except Exception:
+                pass
 
-        threading.Thread(target=poll, daemon=True).start()
-
+    def _poll():
+        from jnius import autoclass
+        CookieManager = autoclass("android.webkit.CookieManager")
+        deadline = time.time() + 600
+        while time.time() < deadline:
+            time.sleep(2)
+            try:
+                cookie = CookieManager.getInstance().getCookie(url) or ""
+            except Exception:
+                continue
+            keys = {k.strip() for k, _v in [p.split("=", 1) for p in cookie.split(";") if "=" in p]}
+            if not any(k in success_keys for k in keys):
+                continue
+            save_cookie(env_var, cookie)
+            reload_gateway()
+            _restore_view()
+            return
     try:
-        _do_ui()
+        _show_webview()
     except Exception as e:
         return f"打开登录窗口失败: {e}"
+    threading.Thread(target=_poll, daemon=True).start()
     return f"已打开{name}登录窗口，登录成功后自动保存 Cookie 并生效"
 
 
@@ -221,7 +227,6 @@ class IrmUi(BoxLayout):
 
     def open_console(self):
         try:
-            from android import activity
             from jnius import autoclass
 
             PythonActivity = autoclass("org.kivy.android.PythonActivity")
