@@ -20,8 +20,9 @@ import traceback
 import urllib.request
 from pathlib import Path
 
-# Kivy 中文字体：在 import App 之前设置默认字体为 Android 系统中文字体
+# Kivy 中文字体：用 LabelBase.register 注册系统中文字体，再设为默认
 from kivy.config import Config
+from kivy.core.text import LabelBase
 _CJK_FONT_CANDIDATES = [
     "/system/fonts/NotoSansCJK-Regular.ttc",
     "/system/fonts/NotoSansSC-Regular.otf",
@@ -31,7 +32,11 @@ _CJK_FONT_CANDIDATES = [
 ]
 for _f in _CJK_FONT_CANDIDATES:
     if os.path.exists(_f):
-        Config.set("kivy", "default_font", ["IRmCJK", _f])
+        try:
+            LabelBase.register(name="IRmCJK", fn_regular=_f)
+            Config.set("kivy", "default_font", "IRmCJK")
+        except Exception:
+            pass
         break
 
 from kivy.app import App
@@ -47,7 +52,20 @@ _PORT = int(os.environ.get("PORT", "5005"))
 _BASE_DIR = Path(__file__).resolve().parent
 
 
-_ERROR_LOG = _BASE_DIR / "gateway_error.log"
+def _data_dir() -> Path:
+    """Android 应用可写目录（APK 内 assets 只读）；非 Android 回退到项目目录。"""
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        ctx = PythonActivity.mActivity.getApplicationContext()
+        return Path(ctx.getFilesDir().getAbsolutePath())
+    except Exception:
+        return _BASE_DIR
+
+
+def _error_log() -> Path:
+    return _data_dir() / "gateway_error.log"
+
 
 def run_gateway() -> None:
     try:
@@ -57,7 +75,7 @@ def run_gateway() -> None:
         uvicorn.run(app, host="127.0.0.1", port=_PORT, log_level="warning", loop="asyncio")
     except Exception:
         try:
-            _ERROR_LOG.write_text(traceback.format_exc(), encoding="utf-8")
+            _error_log().write_text(traceback.format_exc(), encoding="utf-8")
         except Exception:
             pass
 
@@ -85,7 +103,7 @@ def reload_gateway() -> None:
 
 def save_cookie(env_var: str, cookie_str: str) -> str:
     """把抓到的 Cookie 写入 .env（双引号包裹防截断），返回提示。"""
-    env = _BASE_DIR / ".env"
+    env = _data_dir() / ".env"
     lines = env.read_text(encoding="utf-8").splitlines() if env.exists() else []
     val = '"' + cookie_str.replace('"', '\\"') + '"'
     out: list[str] = []
@@ -216,8 +234,8 @@ class IrmUi(BoxLayout):
         except Exception:
             msg = "网关未就绪"
             try:
-                if _ERROR_LOG.exists():
-                    err = _ERROR_LOG.read_text(encoding="utf-8")
+                if _error_log().exists():
+                    err = _error_log().read_text(encoding="utf-8")
                     last = err.strip().splitlines()[-1] if err.strip() else ""
                     msg = f"网关启动失败: {last[:60]}"
             except Exception:
@@ -255,6 +273,8 @@ class IrmUi(BoxLayout):
 class IrmApiApp(App):
     def build(self):
         self.title = "IRmAPI"
+        # 让网关从 Android 可写目录读 .env（APK 内 assets 只读）
+        os.environ["IRMAPI_ENV_FILE"] = str(_data_dir() / ".env")
         threading.Thread(target=run_gateway, daemon=True).start()
         threading.Thread(target=self._wait_and_report, daemon=True).start()
         return IrmUi()

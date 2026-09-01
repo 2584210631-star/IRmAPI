@@ -7,9 +7,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 优先加载项目根目录下的 .env
+# 优先加载项目根目录下的 .env；Android 上通过 IRMAPI_ENV_FILE 指向可写目录
 _ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(_ROOT / ".env")
+_env_file = os.environ.get("IRMAPI_ENV_FILE")
+if _env_file:
+    load_dotenv(_env_file)
+else:
+    load_dotenv(_ROOT / ".env")
 
 
 def _split_csv(value: str | None) -> list[str]:
