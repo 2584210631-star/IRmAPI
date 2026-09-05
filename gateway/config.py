@@ -87,7 +87,8 @@ class Config:
 
     @property
     def doubao_web_enabled(self) -> bool:
-        return bool(self.doubao_session_ids)
+        # DOUBAO_COOKIE_1..N（完整 Cookie，推荐）或 DOUBAO_SESSIONIDS（仅 sessionid）任一即启用
+        return bool(self.doubao_cookies or self.doubao_session_ids)
 
     @property
     def ark_enabled(self) -> bool:
